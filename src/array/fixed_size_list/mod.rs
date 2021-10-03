@@ -33,11 +33,8 @@ impl FixedSizeListArray {
 
     /// Returns a new null [`FixedSizeListArray`].
     pub fn new_null(data_type: DataType, length: usize) -> Self {
-        let values = new_null_array(
-            Self::get_child_and_size(&data_type).0.data_type().clone(),
-            length,
-        )
-        .into();
+        let (child, size) = Self::get_child_and_size(&data_type);
+        let values = new_null_array(child.data_type().clone(), length * size).into();
         Self::from_data(data_type, values, Some(Bitmap::new_zeroed(length)))
     }
 

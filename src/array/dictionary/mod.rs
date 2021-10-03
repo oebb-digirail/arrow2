@@ -13,7 +13,7 @@ mod mutable;
 pub use iterator::*;
 pub use mutable::*;
 
-use super::{new_empty_array, primitive::PrimitiveArray, Array};
+use super::{new_empty_array, new_null_array, primitive::PrimitiveArray, Array};
 
 /// Trait denoting [`NativeType`]s that can be used as keys of a dictionary.
 pub trait DictionaryKey:
@@ -54,7 +54,9 @@ impl<K: DictionaryKey> DictionaryArray<K> {
         let values = Self::get_child(&data_type);
         Self::from_data(
             PrimitiveArray::<K>::new_null(K::DATA_TYPE, length),
-            new_empty_array(values.clone()).into(),
+            // can't be empty because the null keys will always have a `0`, which _may_ be 
+            // accessed via indexing
+            new_null_array(values.clone(), 1).into(),
         )
     }
 
