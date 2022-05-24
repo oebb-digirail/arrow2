@@ -820,11 +820,13 @@ fn write_ipc&lt;W: Write + Seek&gt;(writer: W, array: impl Array + 'static) -&gt
     let schema = vec![Field::new(&quot;a&quot;, array.data_type().clone(), false)].into();
 
     let options = write::WriteOptions { compression: None };
-    let mut writer = write::FileWriter::try_new(writer, &amp;schema, None, options)?;
+    let mut writer = write::FileWriter::new(writer, schema, None, options);
 
     let batch = Chunk::try_new(vec![Arc::new(array) as Arc&lt;dyn Array&gt;])?;
 
+    writer.start()?;
     writer.write(&amp;batch, None)?;
+    writer.finish()?;
 
     Ok(writer.into_inner())
 }
@@ -1116,7 +1118,7 @@ fn parallel_write(path: &amp;str, batches: [Chunk&lt;Arc&lt;dyn Array&gt;&gt;; 2
     for _ in 0..2 {
         // block: assumes that the order of batches matter.
         let records = rx.recv().unwrap();
-        records.iter().try_for_each(|row| writer.write_all(&amp;row))?
+        records.iter().try_for_each(|row| writer.write_all(row))?
     }
 
     for child in children {
@@ -1167,10 +1169,20 @@ fn main() -&gt; Result&lt;()&gt; {
     let reader = File::open(file_path)?;
     let reader = read::FileReader::try_new(reader, None, None, None, None)?;
 
+    println!(&quot;{:#?}&quot;, reader.schema());
+
+    // say we want to evaluate if the we can skip some row groups based on a field's value
+    let field = &amp;reader.schema().fields[0];
+
+    // we can deserialize the parquet statistics from this field
+    let statistics = read::statistics::deserialize(field, &amp;reader.metadata().row_groups)?;
+
+    println!(&quot;{:#?}&quot;, statistics);
+
     let start = SystemTime::now();
     for maybe_chunk in reader {
-        let columns = maybe_chunk?;
-        assert!(!columns.is_empty());
+        let chunk = maybe_chunk?;
+        assert!(!chunk.is_empty());
     }
     println!(&quot;took: {} ms&quot;, start.elapsed().unwrap().as_millis());
     Ok(())
@@ -1266,14 +1278,14 @@ use arrow2::{
     datatypes::{Field, Schema},
     error::Result,
     io::parquet::write::{
-        Compression, Encoding, FileWriter, RowGroupIterator, Version, WriteOptions,
+        CompressionOptions, Encoding, FileWriter, RowGroupIterator, Version, WriteOptions,
     },
 };
 
 fn write_batch(path: &amp;str, schema: Schema, columns: Chunk&lt;Arc&lt;dyn Array&gt;&gt;) -&gt; Result&lt;()&gt; {
     let options = WriteOptions {
         write_statistics: true,
-        compression: Compression::Uncompressed,
+        compression: CompressionOptions::Uncompressed,
         version: Version::V2,
     };
 
@@ -1289,8 +1301,7 @@ fn write_batch(path: &amp;str, schema: Schema, columns: Chunk&lt;Arc&lt;dyn Arra
 
     writer.start()?;
     for group in row_groups {
-        let (group, len) = group?;
-        writer.write(group, len)?;
+        writer.write(group?)?;
     }
     let _size = writer.end(None)?;
     Ok(())
@@ -1369,7 +1380,7 @@ fn parallel_write(path: &amp;str, schema: &amp;Schema, batches: &amp;[Chunk]) -&
     // declare the options
     let options = WriteOptions {
         write_statistics: true,
-        compression: Compression::Snappy,
+        compression: CompressionOptions::Snappy,
         version: Version::V2,
     };
 
@@ -1422,8 +1433,7 @@ fn parallel_write(path: &amp;str, schema: &amp;Schema, batches: &amp;[Chunk]) -&
     // Write the file.
     writer.start()?;
     for group in row_groups {
-        let (group, len) = group?;
-        writer.write(group, len)?;
+        writer.write(group?)?;
     }
     let _size = writer.end(None)?;
 
@@ -1594,12 +1604,13 @@ use arrow2::datatypes::{DataType, Field, Schema};
 use arrow2::error::Result;
 use arrow2::io::ipc::write;
 
-fn write_batches(path: &amp;str, schema: &amp;Schema, columns: &amp;[Chunk&lt;Arc&lt;dyn Array&gt;&gt;]) -&gt; Result&lt;()&gt; {
+fn write_batches(path: &amp;str, schema: Schema, columns: &amp;[Chunk&lt;Arc&lt;dyn Array&gt;&gt;]) -&gt; Result&lt;()&gt; {
     let file = File::create(path)?;
 
     let options = write::WriteOptions { compression: None };
-    let mut writer = write::FileWriter::try_new(file, schema, None, options)?;
+    let mut writer = write::FileWriter::new(file, schema, None, options);
 
+    writer.start()?;
     for columns in columns {
         writer.write(columns, None)?
     }
@@ -1624,7 +1635,7 @@ fn main() -&gt; Result&lt;()&gt; {
     let batch = Chunk::try_new(vec![Arc::new(a) as Arc&lt;dyn Array&gt;, Arc::new(b)])?;
 
     // write it
-    write_batches(file_path, &amp;schema, &amp;[batch])?;
+    write_batches(file_path, schema, &amp;[batch])?;
     Ok(())
 }
 </code></pre></pre>
